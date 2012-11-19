@@ -1,0 +1,73 @@
+#!/usr/bin/env ruby
+require 'net/http'
+
+WALLPAPER_DIRECTORY = "./wallpapers/"
+EXTENSIONS = %w{png jpg jpeg gif}
+SERVICE_URL = URI.parse('http://api.thingspeak.com//channels/1417/field/1/last.txt')
+POLL_INTERVAL = 10
+WALLPAPER_CMD = 'feh --bg-scale %s'
+PID_FILE = 'cheerpaper.pid'
+DAEMONISE = true
+
+# red, orange, yellow, green, blue, cyan, magenta, white, warmwhite, black, and purple
+
+
+def get_colour_name()
+  req = Net::HTTP::Get.new(SERVICE_URL.path)
+  res = Net::HTTP.start(SERVICE_URL.host, SERVICE_URL.port) {|http| http.request(req) }
+  return res.body.chomp.downcase
+rescue 
+  return nil
+end
+
+def select_random_image(prefix)
+  valid_images = []
+
+  # check extension for each image with the prefix
+  Dir.glob(File.join(WALLPAPER_DIRECTORY, "#{prefix}*")){|fn|
+    valid_images << fn if EXTENSIONS.map{|x| ".#{x}"}.include?("#{File.extname(fn).downcase}")
+  }
+
+  return valid_images[ rand * valid_images.length ]
+end
+
+def set_wallpaper(filepath)
+  return nil if filepath == nil
+  cmd = WALLPAPER_CMD % filepath
+  `#{cmd}`
+rescue
+  return nil
+end
+
+if File.exist?(PID_FILE) then
+  $stderr.puts "CheerPaper is already running!"
+  $stderr.puts "Please kill it or remove the pid file (#{PID_FILE})"
+  exit(1)
+end
+
+File.open(PID_FILE, 'w'){|fo| fo.write($$) }
+
+Process.daemon(true) if DAEMONISE
+
+begin
+  curcol = nil
+  loop do
+    # Read the colour from the service
+    nextcol = get_colour_name
+
+    # Go on state change only
+    if(nextcol != curcol)
+      if( set_wallpaper(select_random_image(nextcol)) )
+        curcol = nextcol
+      else
+        $stderr.puts "Error setting wallpaper!"
+      end
+    end
+
+    # Then sleep for the given time
+    sleep(POLL_INTERVAL)
+  end
+rescue SignalException => Se
+  $stderr.puts "Caught signal, closing..."
+end
+File.delete(PID_FILE) if File.exist?(PID_FILE)
