@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 require 'net/http'
 
-WALLPAPER_DIRECTORY = "./wallpapers/"
+WALLPAPER_DIRECTORY = ARGV[0] || "./wallpapers/"
 EXTENSIONS = %w{png jpg jpeg gif}
 SERVICE_URL = URI.parse('http://api.thingspeak.com//channels/1417/field/1/last.txt')
 POLL_INTERVAL = 10
@@ -39,6 +39,11 @@ rescue
   return nil
 end
 
+if not (File.exist?(WALLPAPER_DIRECTORY) and File.directory?(WALLPAPER_DIRECTORY)) then
+  $stderr.puts "Wallpaper directory #{WALLPAPER_DIRECTORY} is not accessible, or is not a directory."
+  exit(1)
+end
+
 if File.exist?(PID_FILE) then
   $stderr.puts "CheerPaper is already running!"
   $stderr.puts "Please kill it or remove the pid file (#{PID_FILE})"
@@ -47,7 +52,6 @@ end
 
 File.open(PID_FILE, 'w'){|fo| fo.write($$) }
 
-Process.daemon(true) if DAEMONISE
 
 begin
   curcol = nil
@@ -57,7 +61,10 @@ begin
 
     # Go on state change only
     if(nextcol != curcol)
-      if( set_wallpaper(select_random_image(nextcol)) )
+      if( image = select_random_image(nextcol) )
+        puts "Setting background to #{image}"
+        set_wallpaper(image)
+        Process.daemon(true) if curcol == nil and DAEMONISE
         curcol = nextcol
       else
         $stderr.puts "Error setting wallpaper!"
