@@ -30,13 +30,15 @@ POLL_INTERVAL         = 30
 # Check for the existence of this pid file
 PID_FILE              = 'cheerpaper.pid'
 # drop to background
-DAEMONISE             = false 
+DAEMONISE             = true 
 # For use with cron, start, set and quit (no polling)
-ONE_TIME              = true
+ONE_TIME              = false 
 # Where to log
 LOG                   = Logger.new STDOUT
 # And the level
 LOG.level             = Logger::INFO
+# manual proxy settings (overrides environment variable http_proxy if set)
+PROXY                 = nil #'http://username:password@proxyhost.com:8080'
 
 
 # -----------------------------------------------------------------------------
@@ -44,8 +46,18 @@ LOG.level             = Logger::INFO
 # Uses SERVICE_URL to download a name
 def get_colour_name
   LOG.debug "Retrieving colour name from #{SERVICE_URL.host}:#{SERVICE_URL.port}#{SERVICE_URL.path}"
+
+  # Load PROXY if set, else use envar
+  proxstring = (ENV['http_proxy'] and PROXY == nil) ? ENV['http_proxy'].to_s : PROXY.to_s
+  p = URI.parse (proxstring =~ /(^$|^http:\/\/.+)/i)? proxstring : "http://#{proxstring}"
+  u = p.userinfo.to_s.split(/:/) 
+  LOG.debug "Using proxy: #{proxstring}" if proxstring != ""
+
+  # Build request path and gather response
+  # NB: doesn't support redirects.
   req = Net::HTTP::Get.new(SERVICE_URL.path)
-  res = Net::HTTP.start(SERVICE_URL.host, SERVICE_URL.port) {|http| http.request(req) }
+  res = Net::HTTP::Proxy(p.host, p.port, u[0], u[1]).start(SERVICE_URL.host, SERVICE_URL.port) {|http| http.request(req) }
+
   LOG.debug "Complete, retrieved: #{res}"
   return res.body.chomp.downcase
 rescue Exception => e
@@ -75,9 +87,14 @@ end
 # Set the wallpaper to a given filepath
 # uses WALLPAPER_CMD
 def set_wallpaper(filepath)
+  # Check the file is there
   return nil if filepath == nil
+  raise "File not found" if not File.exist?(filepath)
+
+  # construct and run command
   cmd = WALLPAPER_CMD % filepath
   `#{cmd}`
+
 rescue Exception => e
   LOG.error "Error setting wallpaper: #{e}"
   e.backtrace.each{|row| LOG.debug "    #{row}" }
@@ -103,7 +120,7 @@ end
 
 # Write a pid file
 if not ONE_TIME then
-  LOG.info "Writing pid file to #{PID_FILE}..."
+  LOG.debug "Writing pid file to #{PID_FILE}..."
   File.open(PID_FILE, 'w'){|fo| fo.write($$) }
 end
 
@@ -138,7 +155,7 @@ end
 
 # Remove the pid file
 if (not ONE_TIME) and File.exist?(PID_FILE) then
-  LOG.info "Removing pid file..."
+  LOG.debug "Removing pid file..."
   File.delete(PID_FILE) 
 end
 LOG.info "Goodbye."
