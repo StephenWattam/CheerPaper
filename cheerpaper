@@ -1,25 +1,63 @@
 #!/usr/bin/env ruby
 require 'net/http'
-
-WALLPAPER_DIRECTORY = ARGV[0] || "./wallpapers/"
-EXTENSIONS = %w{png jpg jpeg gif}
-SERVICE_URL = URI.parse('http://api.thingspeak.com//channels/1417/field/1/last.txt')
-POLL_INTERVAL = 10
-WALLPAPER_CMD = 'feh --bg-scale %s'
-PID_FILE = 'cheerpaper.pid'
-DAEMONISE = true
-
-# red, orange, yellow, green, blue, cyan, magenta, white, warmwhite, black, and purple
+require 'logger'
 
 
-def get_colour_name()
+# -----------------------------------------------------------------------------
+#  Usage:
+#
+#  ./cheerpaper [WALLPAPER_PATH]
+#
+# Cheerpaper will look in your WALLPAPER_PATH for any images beginning with
+# the colour called, and ending in one of the extensions as configured below.
+#
+# This is the list of colours I've seen, but it's not actually given anywhere,
+# so there may be others:
+#   red, orange, yellow, green, blue, cyan, magenta, white, 
+#   warmwhite, black, and purple
+# -----------------------------------------------------------------------------
+ 
+# Keep your wallpapers in here
+WALLPAPER_DIRECTORY   = ARGV[0] || "./wallpapers/" 
+# Checks for these extensions
+EXTENSIONS            = %w{png jpg jpeg gif}
+# The command used to set wallpaper
+WALLPAPER_CMD         = 'feh --bg-scale %s'
+# Check this URL for the info
+SERVICE_URL           = URI.parse('http://api.thingspeak.com//channels/1417/field/1/last.txt')
+# Poll every n seconds
+POLL_INTERVAL         = 30
+# Check for the existence of this pid file
+PID_FILE              = 'cheerpaper.pid'
+# drop to background
+DAEMONISE             = false 
+# For use with cron, start, set and quit (no polling)
+ONE_TIME              = true
+# Where to log
+LOG                   = Logger.new STDOUT
+# And the level
+LOG.level             = Logger::INFO
+
+
+# -----------------------------------------------------------------------------
+# Retrieve a colour name from the web.
+# Uses SERVICE_URL to download a name
+def get_colour_name
+  LOG.debug "Retrieving colour name from #{SERVICE_URL.host}:#{SERVICE_URL.port}#{SERVICE_URL.path}"
   req = Net::HTTP::Get.new(SERVICE_URL.path)
   res = Net::HTTP.start(SERVICE_URL.host, SERVICE_URL.port) {|http| http.request(req) }
+  LOG.debug "Complete, retrieved: #{res}"
   return res.body.chomp.downcase
-rescue 
+rescue Exception => e
+  LOG.error "Error retrieving colour: #{e}"
+  e.backtrace.each{|row| LOG.debug "    #{row}" }
   return nil
 end
 
+
+# Select a random image from WALLPAPER_DIRECTORY that
+#  a) starts with the given prefix
+#  b) ends with something in EXTENSIONS
 def select_random_image(prefix)
   valid_images = []
 
@@ -28,29 +66,46 @@ def select_random_image(prefix)
     valid_images << fn if EXTENSIONS.map{|x| ".#{x}"}.include?("#{File.extname(fn).downcase}")
   }
 
+  LOG.debug "Found #{valid_images.length} image candidate[s] for prefix #{prefix}"
+  valid_images.each{|row| LOG.debug "    #{row}" }
   return valid_images[ rand * valid_images.length ]
 end
 
+
+# Set the wallpaper to a given filepath
+# uses WALLPAPER_CMD
 def set_wallpaper(filepath)
   return nil if filepath == nil
   cmd = WALLPAPER_CMD % filepath
   `#{cmd}`
-rescue
+rescue Exception => e
+  LOG.error "Error setting wallpaper: #{e}"
+  e.backtrace.each{|row| LOG.debug "    #{row}" }
   return nil
 end
+# -----------------------------------------------------------------------------
+# Entry point
 
+
+# Check the wallpaper directory given exists
 if not (File.exist?(WALLPAPER_DIRECTORY) and File.directory?(WALLPAPER_DIRECTORY)) then
-  $stderr.puts "Wallpaper directory #{WALLPAPER_DIRECTORY} is not accessible, or is not a directory."
+  LOG.fatal "Wallpaper directory #{WALLPAPER_DIRECTORY} is not accessible, or is not a directory."
+  LOG.info "To specify a wallpaper directory, provide it as an argument" if ARGV.length == 0 
   exit(1)
 end
 
-if File.exist?(PID_FILE) then
-  $stderr.puts "CheerPaper is already running!"
-  $stderr.puts "Please kill it or remove the pid file (#{PID_FILE})"
+# Check for a pid file
+if (not ONE_TIME) and File.exist?(PID_FILE) then
+  LOG.fatal "CheerPaper is already running!"
+  LOG.info "Please kill it or remove the pid file (#{PID_FILE})"
   exit(1)
 end
 
-File.open(PID_FILE, 'w'){|fo| fo.write($$) }
+# Write a pid file
+if not ONE_TIME then
+  LOG.info "Writing pid file to #{PID_FILE}..."
+  File.open(PID_FILE, 'w'){|fo| fo.write($$) }
+end
 
 
 begin
@@ -62,19 +117,28 @@ begin
     # Go on state change only
     if(nextcol != curcol)
       if( image = select_random_image(nextcol) )
-        puts "Setting background to #{image}"
+        LOG.info "Setting background to #{image}"
         set_wallpaper(image)
         Process.daemon(true) if curcol == nil and DAEMONISE
         curcol = nextcol
       else
-        $stderr.puts "Error setting wallpaper!"
+        LOG.error "Error setting wallpaper!"
       end
     end
+
+    # and break out if requested
+    break if ONE_TIME
 
     # Then sleep for the given time
     sleep(POLL_INTERVAL)
   end
 rescue SignalException => Se
-  $stderr.puts "Caught signal, closing..."
+  LOG.fatal "Caught signal, closing..."
 end
-File.delete(PID_FILE) if File.exist?(PID_FILE)
+
+# Remove the pid file
+if (not ONE_TIME) and File.exist?(PID_FILE) then
+  LOG.info "Removing pid file..."
+  File.delete(PID_FILE) 
+end
+LOG.info "Goodbye."
