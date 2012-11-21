@@ -22,7 +22,7 @@ WALLPAPER_DIRECTORY   = ARGV[0] || "./wallpapers/"
 # Checks for these extensions
 EXTENSIONS            = %w{png jpg jpeg gif}
 # The command used to set wallpaper
-WALLPAPER_CMD         = 'feh --bg-scale %s'
+WALLPAPER_CMD         = 'feh --bg-fill %s'
 # Check this URL for the info
 SERVICE_URL           = URI.parse('http://api.thingspeak.com//channels/1417/field/1/last.txt')
 # Poll every n seconds
