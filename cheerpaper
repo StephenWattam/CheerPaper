@@ -118,6 +118,12 @@ if (not ONE_TIME) and File.exist?(PID_FILE) then
   exit(1)
 end
 
+# Daemonise.
+if DAEMONISE and not ONE_TIME then
+  LOG.info "Forking to background..."
+  Process.daemon(true) 
+end
+
 # Write a pid file
 if not ONE_TIME then
   LOG.debug "Writing pid file to #{PID_FILE}..."
@@ -136,7 +142,6 @@ begin
       if( image = select_random_image(nextcol) )
         LOG.info "Setting background to #{image}"
         set_wallpaper(image)
-        Process.daemon(true) if curcol == nil and DAEMONISE
         curcol = nextcol
       else
         LOG.error "Error setting wallpaper!"
