@@ -51,7 +51,7 @@ def parse
     o.on('-l', '--log FILE', 'Set the log file (default is stdout)'){ |x| opts.log = Logger.new(x) }
     o.on('-p', '--p PROXY', 'Set the proxy, will read from the environment otherwise'){ |x| opts.proxy = x.to_s }
     o.on('-v', '--verbose', 'Verbose mode'){ |x| opts.verbose = x}
-    o.on('-k', '--there-can-be-only-one', 'Only allow one instance (kill if a pid fild is found)'){ |x| opts.kill = true }
+    o.on('-k', '--there-can-be-only-one', 'Only allow one instance (kill if a pid file is found)'){ |x| opts.kill = true }
   end
   op.parse!
 
