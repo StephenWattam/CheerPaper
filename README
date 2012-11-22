@@ -1,0 +1,52 @@
+                            
+
+                              -- CheerPaper --
+
+Cheerpaper is a program to set your desktop according to colours dispensed by
+the Cheerlights service ( http://cheerlights.com ).
+
+It does this by polling the web service and finding files within a specific
+directory that match the pattern given.  It then shells out to a pre-defined
+call of your choice to actually set the wallpaper, meaning that it's actually
+capable of doing things other than set wallpaper ;-).
+
+
+
+                                -- Usage --
+
+Simply put the script somewhere in your $PATH and call it with the -h flag to
+get some help.
+
+Basic usage methods are as follows:
+
+  1) Set wallpaper without polling:
+      
+      $ cheerpaper -d /path/to/wallpapers -o
+
+  2) Poll at regular (60s) intervals, setting the wallpaper when it changes:
+     
+      $ cheerpaper -d /path/to/wallpapers -i 60
+
+By default, cheerpaper drops to the background and drops a pid file in /tmp/ so
+that it can reside as a system service.
+
+
+
+                        -- Wallpaper Setting Policy --
+
+Cheerpaper will look through the directory given for suitable wallpapers: these
+must begin with the data sampled from the web service, and must end with one of
+the extensions listed (can be set with -e).
+
+If multiple files match these criteria, cheerpaper will select a random one.
+Note that your desktop will not get randomised every time, only when the colour
+changes (else fast polling intervals would make it unusable.)
+
+
+            
+                                -- Hacking --
+
+I welcome contributions!  Please get in touch via http://stephenwattam.com to
+send patches, or request repository access.  I also welcome royalty-free images
+to bundle with the thing.
+

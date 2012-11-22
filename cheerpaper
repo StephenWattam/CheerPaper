@@ -13,16 +13,18 @@ require 'shellwords'
 #
 # Cheerpaper will look in a directory (-d) for any images beginning with
 # the colour called, and ending in one of the extensions as configured below.
-#
-# This is the list of colours I've seen, but it's not actually given anywhere,
-# so there may be others:
+# 
+# Colours output by cheerlights:
 #   red, orange, yellow, green, blue, cyan, magenta, white, 
-#   warmwhite, black, and purple
+#   warmwhite, and purple
 # -----------------------------------------------------------------------------
  
 # Prevent people hammering the server
-MIN_POLL_INTERVAL         = 10
+MIN_POLL_INTERVAL = 10
 
+# -----------------------------------------------------------------------------
+# Parse command line options, output struct with global settings
+#
 def parse
   # Set up defaults
   opts            = OpenStruct.new
@@ -30,7 +32,7 @@ def parse
   opts.extensions = %w{png jpg jpeg gif}
   opts.cmd        = 'feh --bg-fill %s'
   opts.url        = 'http://api.thingspeak.com//channels/1417/field/1/last.txt'
-  opts.pid_file    = '/tmp/cheerpaper.pid'
+  opts.pid_file   = '/tmp/cheerpaper.pid'
   opts.daemonise  = true
   opts.one_time   = false
   opts.log        = Logger.new(STDOUT)
@@ -40,16 +42,16 @@ def parse
   opts.kill       = false 
 
   op = OptionParser.new do |o|
-    o.on('-d', '--directory DIR', 'The Directory in which to find wallpaper images'){ |d| opts.wallpaper_dir = d.to_s }
-    o.on('-e', '--extensions EXT1,EXT2,EXT3', 'Define file extensions to seek within the directory'){ |x| opts.extensions = x.to_s.downcase.split(',') }
+    o.on('-d', '--directory DIR', 'The directory in which to find wallpaper images'){ |d| opts.wallpaper_dir = d.to_s }
+    o.on('-e', '--extensions EXT1,EXT2,EXT3', 'Define file extensions to seek within the directory'){ |x| opts.extensions = x.to_s.downcase.split(/,/).map{|x| x.gsub(/^\s*\.?\s*/, '')}.uniq }
     o.on('-c', '--command CMD', 'The wallpaper-setting command.  Use %s as a placeholder for the filename (shell-escaped)'){ |x| opts.cmd = x }
-    o.on('-i', '--interval INT', 'How often, in seconds, to poll the server.'){ |x| opts.interval = [x.to_i, MIN_POLL_INTERVAL].max }
+    o.on('-i', '--interval INT', 'How often, in seconds, to poll the server'){ |x| opts.interval = [x.to_i, MIN_POLL_INTERVAL].max }
     o.on('-u', '--url URL', 'The URL to poll for colour'){ |x| opts.url = x }
     o.on('-P', '--pid [FILE]', 'The PID filepath, omit argument to avoid using pid file'){ |x| opts.pid_file = x }
     o.on('-o', '--once', 'Run once, do not poll server'){ |x| opts.one_time = x}
     o.on('-n', '--no-daemonise', 'Do not daemonise process'){ |x| opts.daemonise = false }
     o.on('-l', '--log FILE', 'Set the log file (default is stdout)'){ |x| opts.log = Logger.new(x) }
-    o.on('-p', '--p PROXY', 'Set the proxy, will read from the environment otherwise'){ |x| opts.proxy = x.to_s }
+    o.on('-p', '--proxy PROXY', 'Set the proxy, will read from the environment otherwise'){ |x| opts.proxy = x.to_s }
     o.on('-v', '--verbose', 'Verbose mode'){ |x| opts.verbose = x}
     o.on('-k', '--there-can-be-only-one', 'Only allow one instance (kill if a pid file is found)'){ |x| opts.kill = true }
   end
@@ -70,15 +72,6 @@ def parse
   return opts
 end
 
-begin
-  $opts = parse
-rescue OptionParser::MissingArgument => MAe
-  $stderr.puts MAe.to_s
-  $stderr.puts "Check help (-h) for usage."
-  exit(1)
-end
-
-# -----------------------------------------------------------------------------
 # Retrieve a colour name from the web.
 # Uses $opts.url to download a name
 def get_colour_name
@@ -116,7 +109,7 @@ def select_random_image(prefix)
     valid_images << fn if $opts.extensions.map{|x| ".#{x}"}.include?("#{File.extname(fn).downcase}")
   }
 
-  $opts.log.debug "Found #{valid_images.length} image candidate[s] for prefix #{prefix}"
+  $opts.log.debug "Found #{valid_images.length} image candidate[s] for prefix #{prefix} and extension in {#{$opts.extensions.join(', ')}}"
   valid_images.each{|row| $opts.log.debug "    #{row}" }
   return valid_images[ rand * valid_images.length ]
 end
@@ -142,6 +135,15 @@ rescue Exception => e
 end
 # -----------------------------------------------------------------------------
 # Entry point
+
+# Load options from command line
+begin
+  $opts = parse
+rescue OptionParser::MissingArgument => MAe
+  $stderr.puts MAe.to_s
+  $stderr.puts "Check help (-h) for usage."
+  exit(1)
+end
 
 
 # Check the wallpaper directory given exists
