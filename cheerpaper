@@ -30,13 +30,14 @@ def parse
   opts.extensions = %w{png jpg jpeg gif}
   opts.cmd        = 'feh --bg-fill %s'
   opts.url        = 'http://api.thingspeak.com//channels/1417/field/1/last.txt'
-  opts.pid_file    = 'cheerpaper.pid'
+  opts.pid_file    = '/tmp/cheerpaper.pid'
   opts.daemonise  = true
   opts.one_time   = false
   opts.log        = Logger.new(STDOUT)
   opts.verbose    = false
-  opts.proxy      = ENV['http_proxy']
+  opts.proxy      = ENV['http_proxy'].to_s
   opts.interval   = 30
+  opts.kill       = false 
 
   op = OptionParser.new do |o|
     o.on('-d', '--directory DIR', 'The Directory in which to find wallpaper images'){ |d| opts.wallpaper_dir = d.to_s }
@@ -50,6 +51,7 @@ def parse
     o.on('-l', '--log FILE', 'Set the log file (default is stdout)'){ |x| opts.log = Logger.new(x) }
     o.on('-p', '--p PROXY', 'Set the proxy, will read from the environment otherwise'){ |x| opts.proxy = x.to_s }
     o.on('-v', '--verbose', 'Verbose mode'){ |x| opts.verbose = x}
+    o.on('-k', '--there-can-be-only-one', 'Only allow one instance (kill if a pid fild is found)'){ |x| opts.kill = true }
   end
   op.parse!
 
@@ -68,8 +70,13 @@ def parse
   return opts
 end
 
-$opts = parse
-
+begin
+  $opts = parse
+rescue OptionParser::MissingArgument => MAe
+  $stderr.puts MAe.to_s
+  $stderr.puts "Check help (-h) for usage."
+  exit(1)
+end
 
 # -----------------------------------------------------------------------------
 # Retrieve a colour name from the web.
@@ -78,7 +85,7 @@ def get_colour_name
   $opts.log.debug "Retrieving colour name from #{$opts.url.host}:#{$opts.url.port}#{$opts.url.path}"
 
   # Load PROXY if set, else use envar
-  p = URI.parse($opts.proxy)
+  p = URI.parse($opts.proxy.to_s)
   u = p.userinfo.to_s.split(/:/) 
   $opts.log.debug "Using proxy: #{$opts.proxy}" if $opts.proxy != ""
 
@@ -138,7 +145,7 @@ end
 
 
 # Check the wallpaper directory given exists
-if not (File.exist?($opts.wallpaper_dir) and File.directory?($opts.wallpaper_dir)) then
+if not (File.exist?($opts.wallpaper_dir.to_s) and File.directory?($opts.wallpaper_dir)) then
   $opts.log.fatal "Wallpaper directory #{$opts.wallpaper_dir} is not accessible, or is not a directory."
   $opts.log.info "To specify a wallpaper directory, provide it as an argument" if ARGV.length == 0 
   exit(1)
@@ -146,9 +153,15 @@ end
 
 # Check for a pid file
 if (not $opts.one_time) and File.exist?($opts.pid_file) then
-  $opts.log.fatal "CheerPaper is already running!"
-  $opts.log.info "Please kill it or remove the pid file (#{$opts.pid_file})"
-  exit(1)
+  if $opts.kill then
+    pid = File.read($opts.pid_file)
+    $opts.log.info "Killing old instance (PID #{pid})"
+    Process.kill('INT', pid.to_i)
+  else
+    $opts.log.fatal "CheerPaper is already running!"
+    $opts.log.info "Please kill it or remove the pid file (#{$opts.pid_file})"
+    exit(1)
+  end
 end
 
 # Daemonise.
