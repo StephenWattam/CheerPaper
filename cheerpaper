@@ -1,14 +1,17 @@
 #!/usr/bin/env ruby
 require 'net/http'
 require 'logger'
+require 'optparse'
+require 'ostruct'
+require 'shellwords'
 
 
 # -----------------------------------------------------------------------------
 #  Usage:
 #
-#  ./cheerpaper [WALLPAPER_PATH]
+#  ./cheerpaper -h
 #
-# Cheerpaper will look in your WALLPAPER_PATH for any images beginning with
+# Cheerpaper will look in a directory (-d) for any images beginning with
 # the colour called, and ending in one of the extensions as configured below.
 #
 # This is the list of colours I've seen, but it's not actually given anywhere,
@@ -17,87 +20,117 @@ require 'logger'
 #   warmwhite, black, and purple
 # -----------------------------------------------------------------------------
  
-# Keep your wallpapers in here
-WALLPAPER_DIRECTORY   = ARGV[0] || "./wallpapers/" 
-# Checks for these extensions
-EXTENSIONS            = %w{png jpg jpeg gif}
-# The command used to set wallpaper
-WALLPAPER_CMD         = 'feh --bg-fill %s'
-# Check this URL for the info
-SERVICE_URL           = URI.parse('http://api.thingspeak.com//channels/1417/field/1/last.txt')
-# Poll every n seconds
-POLL_INTERVAL         = 30
-# Check for the existence of this pid file
-PID_FILE              = 'cheerpaper.pid'
-# drop to background
-DAEMONISE             = true 
-# For use with cron, start, set and quit (no polling)
-ONE_TIME              = false 
-# Where to log
-LOG                   = Logger.new STDOUT
-# And the level
-LOG.level             = Logger::INFO
-# manual proxy settings (overrides environment variable http_proxy if set)
-PROXY                 = nil #'http://username:password@proxyhost.com:8080'
+# Prevent people hammering the server
+MIN_POLL_INTERVAL         = 10
+
+def parse
+  # Set up defaults
+  opts            = OpenStruct.new
+  opts.dir        = './wallpapers'
+  opts.extensions = %w{png jpg jpeg gif}
+  opts.cmd        = 'feh --bg-fill %s'
+  opts.url        = 'http://api.thingspeak.com//channels/1417/field/1/last.txt'
+  opts.pid_file    = 'cheerpaper.pid'
+  opts.daemonise  = true
+  opts.one_time   = false
+  opts.log        = Logger.new(STDOUT)
+  opts.verbose    = false
+  opts.proxy      = ENV['http_proxy']
+  opts.interval   = 30
+
+  op = OptionParser.new do |o|
+    o.on('-d', '--directory DIR', 'The Directory in which to find wallpaper images'){ |d| opts.wallpaper_dir = d.to_s }
+    o.on('-e', '--extensions EXT1,EXT2,EXT3', 'Define file extensions to seek within the directory'){ |x| opts.extensions = x.to_s.downcase.split(',') }
+    o.on('-c', '--command CMD', 'The wallpaper-setting command.  Use %s as a placeholder for the filename (shell-escaped)'){ |x| opts.cmd = x }
+    o.on('-i', '--interval INT', 'How often, in seconds, to poll the server.'){ |x| opts.interval = [x.to_i, MIN_POLL_INTERVAL].max }
+    o.on('-u', '--url URL', 'The URL to poll for colour'){ |x| opts.url = x }
+    o.on('-P', '--pid [FILE]', 'The PID filepath, omit argument to avoid using pid file'){ |x| opts.pid_file = x }
+    o.on('-o', '--once', 'Run once, do not poll server'){ |x| opts.one_time = x}
+    o.on('-n', '--no-daemonise', 'Do not daemonise process'){ |x| opts.daemonise = false }
+    o.on('-l', '--log FILE', 'Set the log file (default is stdout)'){ |x| opts.log = Logger.new(x) }
+    o.on('-p', '--p PROXY', 'Set the proxy, will read from the environment otherwise'){ |x| opts.proxy = x.to_s }
+    o.on('-v', '--verbose', 'Verbose mode'){ |x| opts.verbose = x}
+  end
+  op.parse!
+
+  # Add http onto the proxy if necessary
+  opts.proxy = (opts.proxy =~ /(^$|^http:\/\/.+)/i)? opts.proxy : "http://#{opts.proxy}"
+
+  # Set up log (must be done after log settings above)
+  opts.log.level = (opts.verbose)? Logger::DEBUG : Logger::INFO
+
+  # Make sure it's a URI
+  opts.url = URI.parse(opts.url.to_s)
+
+  # Ensure the command has the filename in it somehow
+  opts.cmd = "#{opts.cmd} %s" if not opts.cmd.include?('%s')
+
+  return opts
+end
+
+$opts = parse
 
 
 # -----------------------------------------------------------------------------
 # Retrieve a colour name from the web.
-# Uses SERVICE_URL to download a name
+# Uses $opts.url to download a name
 def get_colour_name
-  LOG.debug "Retrieving colour name from #{SERVICE_URL.host}:#{SERVICE_URL.port}#{SERVICE_URL.path}"
+  $opts.log.debug "Retrieving colour name from #{$opts.url.host}:#{$opts.url.port}#{$opts.url.path}"
 
   # Load PROXY if set, else use envar
-  proxstring = (ENV['http_proxy'] and PROXY == nil) ? ENV['http_proxy'].to_s : PROXY.to_s
-  p = URI.parse (proxstring =~ /(^$|^http:\/\/.+)/i)? proxstring : "http://#{proxstring}"
+  p = URI.parse($opts.proxy)
   u = p.userinfo.to_s.split(/:/) 
-  LOG.debug "Using proxy: #{proxstring}" if proxstring != ""
+  $opts.log.debug "Using proxy: #{$opts.proxy}" if $opts.proxy != ""
 
   # Build request path and gather response
   # NB: doesn't support redirects.
-  req = Net::HTTP::Get.new(SERVICE_URL.path)
-  res = Net::HTTP::Proxy(p.host, p.port, u[0], u[1]).start(SERVICE_URL.host, SERVICE_URL.port) {|http| http.request(req) }
+  req = Net::HTTP::Get.new($opts.url.path)
+  res = Net::HTTP::Proxy(p.host, p.port, u[0], u[1]).start($opts.url.host, $opts.url.port) {|http| http.request(req) }
 
-  LOG.debug "Complete, retrieved: #{res}"
+  $opts.log.debug "Complete, retrieved: #{res.body} (code: #{res.code})"
+  raise "Unexpected response code: #{res.code}" if res.code.to_i != 200
+
   return res.body.chomp.downcase
 rescue Exception => e
-  LOG.error "Error retrieving colour: #{e}"
-  e.backtrace.each{|row| LOG.debug "    #{row}" }
+  $opts.log.error "Error retrieving colour: #{e}"
+  e.backtrace.each{|row| $opts.log.debug "    #{row}" }
   return nil
 end
 
 
-# Select a random image from WALLPAPER_DIRECTORY that
+# Select a random image from opts.wallpaper_dir that
 #  a) starts with the given prefix
-#  b) ends with something in EXTENSIONS
+#  b) ends with something in $opts.extensions
 def select_random_image(prefix)
   valid_images = []
 
   # check extension for each image with the prefix
-  Dir.glob(File.join(WALLPAPER_DIRECTORY, "#{prefix}*")){|fn|
-    valid_images << fn if EXTENSIONS.map{|x| ".#{x}"}.include?("#{File.extname(fn).downcase}")
+  Dir.glob(File.join($opts.wallpaper_dir, "#{prefix}*")){|fn|
+    valid_images << fn if $opts.extensions.map{|x| ".#{x}"}.include?("#{File.extname(fn).downcase}")
   }
 
-  LOG.debug "Found #{valid_images.length} image candidate[s] for prefix #{prefix}"
-  valid_images.each{|row| LOG.debug "    #{row}" }
+  $opts.log.debug "Found #{valid_images.length} image candidate[s] for prefix #{prefix}"
+  valid_images.each{|row| $opts.log.debug "    #{row}" }
   return valid_images[ rand * valid_images.length ]
 end
 
 
 # Set the wallpaper to a given filepath
-# uses WALLPAPER_CMD
+# uses $opts.cmd
 def set_wallpaper(filepath)
   # Check the file is there
   return nil if filepath == nil
   raise "File not found" if not File.exist?(filepath)
 
   # construct and run command
-  cmd = WALLPAPER_CMD % filepath
+  cmd = $opts.cmd % Shellwords.shellescape(filepath)
+  $opts.log.debug "Running '#{cmd}' in shell..."
   `#{cmd}`
+  $opts.log.debug "Complete."
 
 rescue Exception => e
-  LOG.error "Error setting wallpaper: #{e}"
-  e.backtrace.each{|row| LOG.debug "    #{row}" }
+  $opts.log.error "Error setting wallpaper: #{e}"
+  e.backtrace.each{|row| $opts.log.debug "    #{row}" }
   return nil
 end
 # -----------------------------------------------------------------------------
@@ -105,29 +138,29 @@ end
 
 
 # Check the wallpaper directory given exists
-if not (File.exist?(WALLPAPER_DIRECTORY) and File.directory?(WALLPAPER_DIRECTORY)) then
-  LOG.fatal "Wallpaper directory #{WALLPAPER_DIRECTORY} is not accessible, or is not a directory."
-  LOG.info "To specify a wallpaper directory, provide it as an argument" if ARGV.length == 0 
+if not (File.exist?($opts.wallpaper_dir) and File.directory?($opts.wallpaper_dir)) then
+  $opts.log.fatal "Wallpaper directory #{$opts.wallpaper_dir} is not accessible, or is not a directory."
+  $opts.log.info "To specify a wallpaper directory, provide it as an argument" if ARGV.length == 0 
   exit(1)
 end
 
 # Check for a pid file
-if (not ONE_TIME) and File.exist?(PID_FILE) then
-  LOG.fatal "CheerPaper is already running!"
-  LOG.info "Please kill it or remove the pid file (#{PID_FILE})"
+if (not $opts.one_time) and File.exist?($opts.pid_file) then
+  $opts.log.fatal "CheerPaper is already running!"
+  $opts.log.info "Please kill it or remove the pid file (#{$opts.pid_file})"
   exit(1)
 end
 
 # Daemonise.
-if DAEMONISE and not ONE_TIME then
-  LOG.info "Forking to background..."
+if $opts.daemonise and not $opts.one_time then
+  $opts.log.info "Forking to background..."
   Process.daemon(true) 
 end
 
 # Write a pid file
-if not ONE_TIME then
-  LOG.debug "Writing pid file to #{PID_FILE}..."
-  File.open(PID_FILE, 'w'){|fo| fo.write($$) }
+if not $opts.one_time then
+  $opts.log.debug "Writing pid file to #{$opts.pid_file}..."
+  File.open($opts.pid_file, 'w'){|fo| fo.write($$) }
 end
 
 
@@ -140,27 +173,27 @@ begin
     # Go on state change only
     if(nextcol != curcol)
       if( image = select_random_image(nextcol) )
-        LOG.info "Setting background to #{image}"
+        $opts.log.info "Setting background to #{image}"
         set_wallpaper(image)
         curcol = nextcol
       else
-        LOG.error "Error setting wallpaper!"
+        $opts.log.error "Error setting wallpaper!"
       end
     end
 
     # and break out if requested
-    break if ONE_TIME
+    break if $opts.one_time
 
     # Then sleep for the given time
-    sleep(POLL_INTERVAL)
+    sleep($opts.interval)
   end
 rescue SignalException => Se
-  LOG.fatal "Caught signal, closing..."
+  $opts.log.fatal "Caught signal, closing..."
 end
 
 # Remove the pid file
-if (not ONE_TIME) and File.exist?(PID_FILE) then
-  LOG.debug "Removing pid file..."
-  File.delete(PID_FILE) 
+if (not $opts.one_time) and File.exist?($opts.pid_file) then
+  $opts.log.debug "Removing pid file..."
+  File.delete($opts.pid_file) 
 end
-LOG.info "Goodbye."
+$opts.log.info "Goodbye."
